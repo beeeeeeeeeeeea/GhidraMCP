@@ -20,6 +20,7 @@ MCP Server + Ghidra Plugin
 - Decompile and analyze binaries in Ghidra
 - Automatically rename methods and data
 - List methods, classes, imports, and exports
+- Save agent-made annotations back to the Ghidra project with `save_program`
 
 # Installation
 

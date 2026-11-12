@@ -31,6 +31,14 @@ def test_gui_tools_hidden_in_headless():
     assert {"get_program_info", "read_memory", "get_function_calls", "list_functions"} <= names
 
 
+def test_save_program_posts_and_returns_result(fake_backend):
+    result = {"name": "sample", "project_path": "/sample", "changed": True, "saved": True}
+    fake_backend.ok("/save_program", result)
+    mcp = create_server(GhidraBackend(fake_backend.url))
+    assert call(mcp, "save_program") == result
+    assert fake_backend.requests[-1][:2] == ("POST", "/save_program")
+
+
 def test_backend_error_becomes_tool_error(fake_backend):
     fake_backend.fail("/decompile", 409, "AMBIGUOUS_NAME", "'f' matches 2 functions")
     mcp = create_server(GhidraBackend(fake_backend.url))

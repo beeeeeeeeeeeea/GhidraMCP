@@ -180,6 +180,22 @@ def test_rename_and_annotate_round_trip(headless):
     assert cleared["comment"] is None
 
 
+def test_save_program_writes_changes_and_reports_state(headless):
+    _, _, mcp = headless
+    fns = functions(mcp)
+    call(mcp, "set_disassembly_comment", address=fns["add_numbers"], comment="saved by test")
+
+    saved = call(mcp, "save_program")
+    assert saved["changed"] is True
+    assert saved["saved"] is True
+    assert saved["name"] == BINARIES[headless[0]]
+    assert saved["project_path"]
+
+    again = call(mcp, "save_program")
+    assert again["changed"] is False
+    assert again["saved"] is False
+
+
 def test_disassemble_range_returns_instructions(headless):
     _, _, mcp = headless
     fns = functions(mcp)

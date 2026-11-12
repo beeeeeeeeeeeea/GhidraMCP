@@ -19,6 +19,7 @@ which binary you are working on. Addresses are hex strings such as "0x401000". L
 paginated: pass offset/limit and check has_more. Prefer the address-based tools for modifications,
 since function names can be ambiguous. To create a function from raw bytes, run disassemble_range
 first; create_function requires an existing instruction and will not overwrite a function.
+Modifications stay in memory until save_program writes them to the Ghidra project.
 """
 
 Result = dict[str, Any]
@@ -57,6 +58,13 @@ def create_server(
         """Identify the target program: name, format, language/architecture, compiler spec,
         image base, address range, size, entry points, and hashes."""
         return get("program_info")
+
+    @mcp.tool()
+    def save_program() -> Result:
+        """Save the program's unsaved changes to its Ghidra project file. Returns name,
+        project_path, changed (whether there were unsaved changes) and saved (whether the file
+        was written). Fails for read-only programs and programs not stored in a project."""
+        return post("save_program")
 
     # ---- Listings --------------------------------------------------------------------------
 

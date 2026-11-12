@@ -82,6 +82,10 @@ public class McpException extends RuntimeException {
 		return new McpException("UNSUPPORTED", 501, message);
 	}
 
+	public static McpException readOnly(String message) {
+		return new McpException("READ_ONLY", 409, message);
+	}
+
 	public static McpException decompileFailed(String message) {
 		return new McpException("DECOMPILE_FAILED", 500, message);
 	}

@@ -19,6 +19,7 @@ import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.services.DataTypeQueryService;
 import ghidra.app.util.parser.FunctionSignatureParser;
+import ghidra.framework.model.DomainFile;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressIterator;
 import ghidra.program.model.address.AddressSet;
@@ -117,6 +118,35 @@ public class GhidraAnalysisService {
 			entryPoints,
 			program.getExecutableMD5(),
 			program.getExecutableSHA256());
+	}
+
+	/**
+	 * Saves the program's unsaved changes to its project file. Only programs backed by a writable
+	 * project file can be saved; a program without changes is left untouched.
+	 */
+	public SaveResult saveProgram(Program program, TaskMonitor monitor) {
+		DomainFile file = program.getDomainFile();
+		if (file == null) {
+			throw McpException.unsupported(
+				"The program is not stored in a project; save it with File > Save As first");
+		}
+		if (!file.canSave()) {
+			throw McpException.readOnly("Program '" + program.getName() + "' (" +
+				file.getPathname() + ") is read-only and cannot be saved");
+		}
+		return writeExecutor.execute(() -> {
+			String path = file.getPathname();
+			boolean changed = program.isChanged();
+			if (changed) {
+				try {
+					program.save("Saved by ghidra-mcp", monitor);
+				}
+				catch (Exception e) {
+					throw McpException.failed("Could not save " + path + ": " + e.getMessage(), e);
+				}
+			}
+			return new SaveResult(program.getName(), path, changed, changed);
+		});
 	}
 
 	// ------------------------------------------------------------------------------------------

@@ -26,6 +26,9 @@ public final class Model {
 			String sha256) {
 	}
 
+	public record SaveResult(String name, String projectPath, boolean changed, boolean saved) {
+	}
+
 	public record Segment(String name, String start, String end, long size, String permissions,
 			boolean initialized) {
 	}

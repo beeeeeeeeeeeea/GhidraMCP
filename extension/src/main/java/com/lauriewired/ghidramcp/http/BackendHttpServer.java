@@ -90,6 +90,7 @@ public final class BackendHttpServer {
 
 		routes.put("/health", new Route("GET", false, (q, p) -> health(p)));
 		get("/program_info", (q, p) -> service.getProgramInfo(p));
+		post("/save_program", (q, p) -> service.saveProgram(p, monitor));
 
 		get("/functions", (q, p) -> service.listFunctions(p, q.optional("filter"), q.offset(), q.limit(100)));
 		get("/classes", (q, p) -> service.listClasses(p, q.offset(), q.limit(100)));
