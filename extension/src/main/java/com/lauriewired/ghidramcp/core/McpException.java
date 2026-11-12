@@ -1,5 +1,7 @@
 package com.lauriewired.ghidramcp.core;
 
+import ghidra.program.model.address.Address;
+
 /**
  * A failure that is reported to the client as a structured error with a stable code.
  */
@@ -46,6 +48,22 @@ public class McpException extends RuntimeException {
 
 	public static McpException functionNotFound(String what) {
 		return new McpException("FUNCTION_NOT_FOUND", 404, "No function found " + what);
+	}
+
+	public static McpException functionExists(Address address, String name) {
+		return new McpException("FUNCTION_EXISTS", 409,
+			"A function '" + name + "' already exists at or contains " + address);
+	}
+
+	public static McpException notCode(Address address) {
+		return new McpException("NOT_CODE", 409,
+			"No instruction starts at " + address + "; disassemble the bytes first");
+	}
+
+	public static McpException dataExists(Address address) {
+		return new McpException("DATA_EXISTS", 409,
+			"Data is already defined at or contains " + address +
+				"; pass overwrite=true to replace it");
 	}
 
 	public static McpException notFound(String message) {

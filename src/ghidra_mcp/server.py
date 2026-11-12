@@ -17,7 +17,8 @@ INSTRUCTIONS = """\
 Tools for reverse engineering the program open in Ghidra. Call get_program_info first to confirm
 which binary you are working on. Addresses are hex strings such as "0x401000". List tools are
 paginated: pass offset/limit and check has_more. Prefer the address-based tools for modifications,
-since function names can be ambiguous.
+since function names can be ambiguous. To create a function from raw bytes, run disassemble_range
+first; create_function requires an existing instruction and will not overwrite a function.
 """
 
 Result = dict[str, Any]
@@ -122,6 +123,13 @@ def create_server(
         calling convention."""
         return get("function", address=address)
 
+    @mcp.tool()
+    def create_function(address: str, name: str | None = None) -> Result:
+        """Create a function at an address. The address must start an existing instruction and
+        must not already be inside a function. Disassemble the bytes first with
+        disassemble_range if needed."""
+        return post("create_function", address=address, name=name)
+
     if gui_context:
 
         @mcp.tool()
@@ -150,6 +158,27 @@ def create_server(
         """Disassemble the instructions in a function's body (address, bytes, instruction,
         end-of-line comment)."""
         return get("disassemble_function", address=address, offset=offset, limit=limit)
+
+    @mcp.tool()
+    def disassemble_range(
+        start_address: str,
+        end_address: str,
+        follow_flow: bool = True,
+        offset: int = 0,
+        limit: int = 500,
+    ) -> Result:
+        """Disassemble every byte from start_address through end_address (inclusive), like
+        selecting the range and pressing D. The range is capped at 64 KiB per call.
+        follow_flow=True continues along control flow outside the range; False restricts
+        disassembly to the range."""
+        return post(
+            "disassemble_range",
+            start_address=start_address,
+            end_address=end_address,
+            follow_flow=follow_flow,
+            offset=offset,
+            limit=limit,
+        )
 
     # ---- References ------------------------------------------------------------------------
 
@@ -213,6 +242,21 @@ def create_server(
     def rename_data(address: str, new_name: str) -> Result:
         """Rename the label of defined data (or an existing symbol) at an address."""
         return post("rename_data", address=address, new_name=new_name)
+
+    @mcp.tool()
+    def define_data(
+        address: str, data_type: str, count: int = 1, overwrite: bool = False
+    ) -> Result:
+        """Define data of a Ghidra/C type at an address, e.g. data_type="dword" or "char[16]".
+        count repeats the type contiguously as an array (dword with count=4 is 16 bytes).
+        Fails if data is already defined unless overwrite=True. Capped at 64 KiB per call."""
+        return post(
+            "define_data",
+            address=address,
+            data_type=data_type,
+            count=count,
+            overwrite=overwrite,
+        )
 
     @mcp.tool()
     def rename_variable(

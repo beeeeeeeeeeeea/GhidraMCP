@@ -80,6 +80,20 @@ public final class Request {
 		}
 	}
 
+	public boolean booleanParam(String name, boolean defaultValue) {
+		String value = params.get(name);
+		if (value == null || value.isEmpty()) {
+			return defaultValue;
+		}
+		if ("true".equalsIgnoreCase(value)) {
+			return true;
+		}
+		if ("false".equalsIgnoreCase(value)) {
+			return false;
+		}
+		throw McpException.invalidParameter(name + " must be true or false (got '" + value + "')");
+	}
+
 	public int offset() {
 		return Math.max(0, intParam("offset", 0));
 	}

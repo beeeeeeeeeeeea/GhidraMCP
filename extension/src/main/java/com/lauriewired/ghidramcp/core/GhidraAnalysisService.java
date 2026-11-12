@@ -10,7 +10,10 @@ import java.util.function.Supplier;
 
 import com.lauriewired.ghidramcp.core.Model.*;
 
+import ghidra.app.cmd.data.CreateDataCmd;
+import ghidra.app.cmd.disassemble.DisassembleCommand;
 import ghidra.app.cmd.function.ApplyFunctionSignatureCmd;
+import ghidra.app.cmd.function.CreateFunctionCmd;
 import ghidra.app.cmd.function.FunctionRenameOption;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileResults;
@@ -18,6 +21,9 @@ import ghidra.app.services.DataTypeQueryService;
 import ghidra.app.util.parser.FunctionSignatureParser;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressIterator;
+import ghidra.program.model.address.AddressSet;
+import ghidra.program.model.address.AddressSetView;
+import ghidra.program.model.data.ArrayDataType;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.DataTypeConflictHandler;
 import ghidra.program.model.data.DataTypeManager;
@@ -49,6 +55,8 @@ public class GhidraAnalysisService {
 	public static final int DECOMPILE_TIMEOUT_SECONDS = 60;
 	public static final int MAX_DECOMPILE_CHARS = 200_000;
 	public static final int MAX_READ_LENGTH = 4096;
+	public static final int MAX_DISASSEMBLE_BYTES = 64 * 1024;
+	public static final int MAX_DATA_BYTES = 64 * 1024;
 	private static final int MAX_ENTRY_POINTS = 32;
 
 	private static final Map<String, String> TYPE_ALIASES = Map.ofEntries(
@@ -230,6 +238,42 @@ public class GhidraAnalysisService {
 		return info(f);
 	}
 
+	/**
+	 * Creates a function at an existing instruction address. Ghidra is allowed to compute the
+	 * body; the caller must disassemble the bytes first, and no function may already contain the
+	 * address.
+	 */
+	public FunctionInfo createFunction(Program program, String address, String name,
+			TaskMonitor monitor) {
+		Address entry = parseAddress(program, address);
+		String functionName = name == null || name.isBlank() ? null : name.trim();
+		return write(program, "Create function", () -> {
+			Function existing = program.getFunctionManager().getFunctionContaining(entry);
+			if (existing != null) {
+				throw McpException.functionExists(entry, existing.getName());
+			}
+			if (program.getListing().getInstructionAt(entry) == null) {
+				throw McpException.notCode(entry);
+			}
+			CreateFunctionCmd cmd = new CreateFunctionCmd(functionName, entry, null,
+				SourceType.USER_DEFINED, false, false);
+			if (!cmd.applyTo(program, monitor)) {
+				String message = cmd.getStatusMsg();
+				throw McpException.failed("Could not create function at " + entry +
+					(message != null ? ": " + message : ""));
+			}
+			Function created = cmd.getFunction();
+			if (created == null) {
+				created = program.getFunctionManager().getFunctionAt(entry);
+			}
+			if (created == null) {
+				throw McpException.failed(
+					"Function creation reported success but no function exists at " + entry);
+			}
+			return info(created);
+		});
+	}
+
 	public Decompilation decompileByName(Program program, String name, TaskMonitor monitor) {
 		return decompile(program, functionByName(program, name), monitor);
 	}
@@ -261,6 +305,67 @@ public class GhidraAnalysisService {
 				ins.toString(), listing.getComment(CommentType.EOL, ins.getAddress())));
 		}
 		return page.build();
+	}
+
+	/**
+	 * Disassembles the bytes from start through end (inclusive), like selecting that range and
+	 * pressing D. With followFlow the command is allowed to continue along control flow outside
+	 * the range; without it, disassembly is restricted to the range.
+	 */
+	public DisassemblyResult disassembleRange(Program program, String startText, String endText,
+			boolean followFlow, int offset, int limit, TaskMonitor monitor) {
+		Address start = parseAddress(program, startText);
+		Address end = parseAddress(program, endText);
+		if (!start.getAddressSpace().equals(end.getAddressSpace())) {
+			throw McpException.invalidParameter(
+				"start_address and end_address must be in the same address space");
+		}
+		if (end.compareTo(start) < 0) {
+			throw McpException.invalidParameter(
+				"end_address must be greater than or equal to start_address");
+		}
+		long bytes;
+		try {
+			bytes = end.subtract(start) + 1;
+		}
+		catch (Exception e) {
+			throw McpException.invalidParameter("Invalid address range: " + e.getMessage());
+		}
+		if (bytes > MAX_DISASSEMBLE_BYTES) {
+			throw McpException.invalidParameter("Range is " + bytes + " bytes; maximum is " +
+				MAX_DISASSEMBLE_BYTES + " bytes per call");
+		}
+
+		AddressSet range = new AddressSet(start, end);
+		return write(program, "Disassemble range", () -> {
+			DisassembleCommand cmd =
+				new DisassembleCommand(range, followFlow ? null : range, followFlow);
+			cmd.enableCodeAnalysis(followFlow);
+			if (!cmd.applyTo(program, monitor)) {
+				String message = cmd.getStatusMsg();
+				throw McpException.failed("Could not disassemble " + start + " to " + end +
+					(message != null ? ": " + message : ""));
+			}
+			AddressSet disassembled = cmd.getDisassembledAddressSet();
+			if (disassembled == null) {
+				disassembled = new AddressSet();
+			}
+			// Include the requested range so callers still get the instructions when the bytes
+			// were already disassembled (getDisassembledAddressSet() is only newly decoded bytes).
+			AddressSet view = new AddressSet(range);
+			view.add(disassembled);
+			Page.Builder<InstructionLine> page = new Page.Builder<>(offset, limit);
+			Listing listing = program.getListing();
+			InstructionIterator it = listing.getInstructions(view, true);
+			while (it.hasNext()) {
+				Instruction ins = it.next();
+				page.offer(() -> new InstructionLine(str(ins.getAddress()), hexBytes(ins),
+					ins.toString(), listing.getComment(CommentType.EOL, ins.getAddress())));
+			}
+			return new DisassemblyResult(str(start), str(end),
+				disassembled.isEmpty() ? "" : disassembled.toString(),
+				disassembled.getNumAddresses(), page.build());
+		});
 	}
 
 	// ------------------------------------------------------------------------------------------
@@ -501,6 +606,54 @@ public class GhidraAnalysisService {
 				symbol = st.createLabel(addr, newName, SourceType.USER_DEFINED);
 			}
 			return new Renamed(str(addr), old, symbol.getName());
+		});
+	}
+
+	/**
+	 * Defines data at an address using a Ghidra/C type name. count greater than one creates an
+	 * array of that many elements. Existing defined data is only replaced when overwrite is true.
+	 */
+	public DataDefinition defineData(Program program, String address, String typeName, int count,
+			boolean overwrite) {
+		Address addr = parseAddress(program, address);
+		if (count < 1) {
+			throw McpException.invalidParameter("count must be at least 1 (got " + count + ")");
+		}
+		DataType base = resolveDataType(program, typeName);
+		int elementSize = base.getLength();
+		if (elementSize <= 0) {
+			throw McpException.invalidParameter(
+				"Data type '" + typeName + "' has an unknown or variable length");
+		}
+		long bytes;
+		try {
+			bytes = Math.multiplyExact((long) elementSize, (long) count);
+		}
+		catch (ArithmeticException e) {
+			throw McpException.invalidParameter("count is too large");
+		}
+		if (bytes > MAX_DATA_BYTES) {
+			throw McpException.invalidParameter("Defined data would be " + bytes +
+				" bytes; maximum is " + MAX_DATA_BYTES + " bytes per call");
+		}
+		DataType type = count == 1 ? base : new ArrayDataType(base, count, elementSize);
+		return write(program, "Define data", () -> {
+			if (!overwrite && program.getListing().getDefinedDataContaining(addr) != null) {
+				throw McpException.dataExists(addr);
+			}
+			CreateDataCmd cmd = new CreateDataCmd(addr, overwrite, type);
+			if (!cmd.applyTo(program)) {
+				String message = cmd.getStatusMsg();
+				throw McpException.failed("Could not define data at " + addr +
+					(message != null ? ": " + message : ""));
+			}
+			Data data = program.getListing().getDefinedDataAt(addr);
+			if (data == null) {
+				throw McpException.failed(
+					"Data creation reported success but no data exists at " + addr);
+			}
+			return new DataDefinition(str(data.getAddress()), str(data.getMaxAddress()),
+				data.getDataType().getDisplayName(), count, data.getLength(), data.getLabel());
 		});
 	}
 

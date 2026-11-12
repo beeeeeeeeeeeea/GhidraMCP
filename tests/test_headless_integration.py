@@ -180,6 +180,100 @@ def test_rename_and_annotate_round_trip(headless):
     assert cleared["comment"] is None
 
 
+def test_disassemble_range_returns_instructions(headless):
+    _, _, mcp = headless
+    fns = functions(mcp)
+    info = call(mcp, "get_function_by_address", address=fns["add_numbers"])
+    result = call(mcp, "disassemble_range", start_address=info["body_start"],
+                 end_address=info["body_end"], follow_flow=False)
+    assert result["start"] == info["body_start"]
+    assert result["end"] == info["body_end"]
+    assert result["instructions"]["total"] >= 1
+    assert all(int(line["address"], 16) <= int(info["body_end"], 16)
+               for line in result["instructions"]["items"])
+
+
+def test_disassemble_range_rejects_large_and_reversed_ranges(headless):
+    _, _, mcp = headless
+    info = call(mcp, "get_function_by_address", address=functions(mcp)["add_numbers"])
+    with pytest.raises(ToolError, match="INVALID_PARAMETER"):
+        asyncio.run(mcp.call_tool("disassemble_range",
+                                  {"start_address": "0x0", "end_address": "0x20000"}))
+    with pytest.raises(ToolError, match="INVALID_PARAMETER"):
+        asyncio.run(mcp.call_tool("disassemble_range",
+                                  {"start_address": info["body_end"],
+                                   "end_address": info["body_start"]}))
+
+
+def test_create_function_checks_existing_and_not_code(headless):
+    _, _, mcp = headless
+    with pytest.raises(ToolError, match="FUNCTION_EXISTS"):
+        asyncio.run(mcp.call_tool("create_function",
+                                  {"address": functions(mcp)["add_numbers"]}))
+    with pytest.raises(ToolError, match="NOT_CODE"):
+        asyncio.run(mcp.call_tool("create_function", {"address": "0x0"}))
+
+
+def test_create_function_after_disassembling_padding(headless):
+    _, _, mcp = headless
+    segments = call(mcp, "list_segments", limit=100)["items"]
+    text = next((s for s in segments if s["name"] == ".text"), None)
+    assert text is not None
+    text_start, text_end = int(text["start"], 16), int(text["end"], 16)
+    funcs = sorted(call(mcp, "list_functions", limit=2000)["items"],
+                   key=lambda f: int(f["address"], 16))
+    for prev, nxt in zip(funcs, funcs[1:]):
+        prev_addr, next_addr = int(prev["address"], 16), int(nxt["address"], 16)
+        if not (text_start <= prev_addr < next_addr <= text_end):
+            continue
+        info = call(mcp, "get_function_by_address", address=prev["address"])
+        gap_start = int(info["body_end"], 16) + 1
+        gap_end = next_addr - 1
+        if gap_end < gap_start or gap_end - gap_start + 1 > 64:
+            continue
+        try:
+            decoded = call(mcp, "disassemble_range", start_address=hex(gap_start),
+                           end_address=hex(gap_end), follow_flow=False)
+            if decoded["instructions"]["total"] == 0:
+                continue
+            created = call(mcp, "create_function", address=hex(gap_start),
+                           name="agent_added")
+        except ToolError:
+            continue
+        assert int(created["address"], 16) == gap_start
+        assert created["name"] == "agent_added"
+        return
+    pytest.fail("no padding gap suitable for create_function")
+
+
+def test_define_data_round_trip(headless):
+    _, _, mcp = headless
+    segments = call(mcp, "list_segments", limit=100)["items"]
+    writable = [s for s in segments
+                if "w" in s["permissions"] and "x" not in s["permissions"]
+                and s["size"] >= 8 and s["name"] != "EXTERNAL"]
+    segment = next((s for s in writable if not s["initialized"]), None)
+    if segment is None:
+        segment = next((s for s in writable if s["name"] == ".tls"), None)
+    assert segment is not None
+    address = segment["start"]
+
+    with pytest.raises(ToolError, match="INVALID_PARAMETER"):
+        asyncio.run(mcp.call_tool("define_data",
+                                  {"address": address, "data_type": "dword", "count": 20000}))
+
+    defined = call(mcp, "define_data", address=address, data_type="dword", count=2,
+                   overwrite=True)
+    assert defined["count"] == 2
+    assert defined["size"] == 8
+    with pytest.raises(ToolError, match="DATA_EXISTS"):
+        asyncio.run(mcp.call_tool("define_data",
+                                  {"address": address, "data_type": "dword"}))
+    again = call(mcp, "define_data", address=address, data_type="dword", count=2,
+                 overwrite=True)
+    assert again["size"] == 8
+
+
 def test_unknown_type_is_rejected(headless):
     _, _, mcp = headless
     fns = functions(mcp)

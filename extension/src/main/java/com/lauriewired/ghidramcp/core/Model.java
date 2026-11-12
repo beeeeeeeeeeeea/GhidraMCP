@@ -46,6 +46,14 @@ public final class Model {
 			String comment) {
 	}
 
+	public record DisassemblyResult(String start, String end, String disassembled,
+			long disassembledAddressCount, Page<InstructionLine> instructions) {
+	}
+
+	public record DataDefinition(String address, String end, String type, int count, long size,
+			String label) {
+	}
+
 	public record XrefTo(String from, String type, FunctionRef fromFunction) {
 	}
 

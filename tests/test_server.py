@@ -58,3 +58,49 @@ def test_rename_variable_requires_function_identity():
     mcp = create_server(GhidraBackend("http://127.0.0.1:1/"))
     with pytest.raises(ToolError, match="MISSING_PARAMETER"):
         asyncio.run(mcp.call_tool("rename_variable", {"old_name": "a", "new_name": "b"}))
+
+
+def test_create_function_posts_address_and_name(fake_backend):
+    fake_backend.ok("/create_function", {"name": "decrypt", "address": "00401000"})
+    mcp = create_server(GhidraBackend(fake_backend.url))
+    assert call(mcp, "create_function", address="0x401000", name="decrypt")["name"] == "decrypt"
+    method, path, params = fake_backend.requests[-1]
+    assert (method, path) == ("POST", "/create_function")
+    assert params == {"address": "0x401000", "name": "decrypt"}
+
+
+def test_create_function_omits_none_name(fake_backend):
+    fake_backend.ok("/create_function", {"name": "FUN_00401000"})
+    mcp = create_server(GhidraBackend(fake_backend.url))
+    call(mcp, "create_function", address="0x401000")
+    assert fake_backend.requests[-1][2] == {"address": "0x401000"}
+
+
+def test_disassemble_range_posts_pagination_and_follow_flow(fake_backend):
+    fake_backend.ok("/disassemble_range", {"start": "0x401000", "end": "0x401010"})
+    mcp = create_server(GhidraBackend(fake_backend.url))
+    call(mcp, "disassemble_range", start_address="0x401000", end_address="0x401010")
+    method, path, params = fake_backend.requests[-1]
+    assert (method, path) == ("POST", "/disassemble_range")
+    assert params["follow_flow"] == "True"
+    assert params["offset"] == "0"
+    assert params["limit"] == "500"
+    call(mcp, "disassemble_range", start_address="0x401000", end_address="0x401010",
+         follow_flow=False)
+    assert fake_backend.requests[-1][2]["follow_flow"] == "False"
+
+
+def test_define_data_posts_type_count_and_overwrite(fake_backend):
+    fake_backend.ok("/define_data", {"address": "0x404000", "size": 8})
+    mcp = create_server(GhidraBackend(fake_backend.url))
+    call(mcp, "define_data", address="0x404000", data_type="dword", count=2)
+    method, path, params = fake_backend.requests[-1]
+    assert (method, path) == ("POST", "/define_data")
+    assert params == {
+        "address": "0x404000",
+        "data_type": "dword",
+        "count": "2",
+        "overwrite": "False",
+    }
+    call(mcp, "define_data", address="0x404000", data_type="dword", overwrite=True)
+    assert fake_backend.requests[-1][2]["overwrite"] == "True"

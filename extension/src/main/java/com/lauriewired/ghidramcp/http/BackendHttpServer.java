@@ -121,6 +121,10 @@ public final class BackendHttpServer {
 		post("/set_disassembly_comment", (q, p) -> service.setComment(p, q.required("address"), q.present("comment"), CommentType.EOL));
 		post("/set_function_prototype", (q, p) -> service.setFunctionPrototype(p, q.required("function_address"), q.required("prototype"), provider.getDataTypeService(), monitor));
 		post("/set_local_variable_type", (q, p) -> service.setLocalVariableType(p, q.required("function_address"), q.required("variable_name"), q.required("new_type"), monitor));
+
+		post("/create_function", (q, p) -> service.createFunction(p, q.required("address"), q.optional("name"), monitor));
+		post("/disassemble_range", (q, p) -> service.disassembleRange(p, q.required("start_address"), q.required("end_address"), q.booleanParam("follow_flow", true), q.offset(), q.limit(500), monitor));
+		post("/define_data", (q, p) -> service.defineData(p, q.required("address"), q.required("data_type"), q.intParam("count", 1), q.booleanParam("overwrite", false)));
 	}
 
 	private void get(String path, Handler handler) {
